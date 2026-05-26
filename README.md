@@ -12,7 +12,9 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Điền thông tin DB trong `.env` (trùng DB TechXchange backend hiện tại) + `GEMINI_API_KEY`.
+Điền thông tin DB trong `.env` (trùng DB TechXchange backend hiện tại) và cấu hình embedding:
+- Ưu tiên Vertex AI: `GOOGLE_GENAI_USE_VERTEXAI=true`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`
+- Hoặc fallback Gemini key: `GEMINI_API_KEY`
 `APP_RELOAD=false` mặc định để tránh spawn nhiều process khi chạy production.
 
 ## 2) Chạy service
@@ -96,6 +98,10 @@ app/
   db.py
   embedding_cache.py
   gemini_embedding_client.py
+  recommendation_constants.py
+  recommendation_builders.py
+  recommendation_scorers.py
+  recommendation_service.py
   repositories.py
   recommender.py
   routes.py

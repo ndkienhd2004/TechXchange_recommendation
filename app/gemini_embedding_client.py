@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import json
 from typing import Iterable
-from urllib import error, request
+
+from google import genai
+from google.genai import types
 
 
 class GeminiEmbeddingClient:
@@ -13,23 +14,42 @@ class GeminiEmbeddingClient:
         output_dimensionality: int = 768,
         timeout_seconds: int = 30,
         batch_size: int = 32,
+        use_vertexai: bool = False,
+        google_cloud_project: str = "",
+        google_cloud_location: str = "us-central1",
     ) -> None:
-        """HTTP client tối giản gọi Gemini Embedding API (batchEmbedContents).
-
-        - Chia batch theo `batch_size` để tránh payload quá lớn.
-        - Thử gửi `outputDimensionality` (nếu API reject → retry không gửi field này).
-        """
+        """Embedding client for Gemini API key mode or Vertex AI mode."""
         self.api_key = api_key
         self.model = model
         self.output_dimensionality = output_dimensionality
         self.timeout_seconds = timeout_seconds
         self.batch_size = max(1, batch_size)
-        self.endpoint = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:batchEmbedContents"
-        )
+        self.use_vertexai = use_vertexai
+        self.google_cloud_project = google_cloud_project
+        self.google_cloud_location = google_cloud_location
+        self._client = self._build_client()
+
+    def _build_client(self) -> genai.Client:
+        if self.use_vertexai:
+            if not self.google_cloud_project:
+                raise RuntimeError("GOOGLE_CLOUD_PROJECT is required for Vertex AI.")
+            if not self.google_cloud_location:
+                raise RuntimeError("GOOGLE_CLOUD_LOCATION is required for Vertex AI.")
+            return genai.Client(
+                vertexai=True,
+                project=self.google_cloud_project,
+                location=self.google_cloud_location,
+                http_options=types.HttpOptions(api_version="v1"),
+            )
+
+        if not self.api_key:
+            raise RuntimeError(
+                "GEMINI_API_KEY is required when GOOGLE_GENAI_USE_VERTEXAI=false.",
+            )
+        return genai.Client(api_key=self.api_key)
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Embed danh sách text thành danh sách vector float (giữ thứ tự input)."""
+        """Embed texts in batches and keep output order the same as input."""
         if not texts:
             return []
 
@@ -40,55 +60,29 @@ class GeminiEmbeddingClient:
         return output
 
     def _embed_batch(self, texts: Iterable[str]) -> list[list[float]]:
-        """Embed một batch (internal)."""
-        requests_payload = []
-        for text in texts:
-            body = {
-                "model": f"models/{self.model}",
-                "content": {"parts": [{"text": text}]},
-            }
-            # outputDimensionality is optional; some API versions may ignore/deny it.
-            if self.output_dimensionality > 0:
-                body["outputDimensionality"] = self.output_dimensionality
-            requests_payload.append(body)
+        contents = list(texts)
+        if not contents:
+            return []
 
-        payload = {"requests": requests_payload}
+        config = types.EmbedContentConfig()
+        if self.output_dimensionality > 0:
+            config = types.EmbedContentConfig(
+                output_dimensionality=self.output_dimensionality,
+            )
+
         try:
-            data = self._post_json(payload)
-        except RuntimeError as exc:
-            # Retry without outputDimensionality for API compatibility.
-            if "outputDimensionality" in str(exc):
-                for item in requests_payload:
-                    item.pop("outputDimensionality", None)
-                data = self._post_json({"requests": requests_payload})
-            else:
-                raise
+            response = self._client.models.embed_content(
+                model=self.model,
+                contents=contents,
+                config=config,
+            )
+        except Exception as exc:  # noqa: BLE001
+            mode = "Vertex AI" if self.use_vertexai else "Gemini API key"
+            raise RuntimeError(f"{mode} embedding request failed: {exc}") from exc
 
-        embeddings = data.get("embeddings") or []
         vectors: list[list[float]] = []
-        for emb in embeddings:
-            values = emb.get("values") or []
-            vectors.append([float(v) for v in values])
+        for emb in list(response.embeddings or []):
+            values = [float(v) for v in list(emb.values or [])]
+            vectors.append(values)
         return vectors
-
-    def _post_json(self, payload: dict) -> dict:
-        """POST JSON đến Gemini endpoint; raise RuntimeError với message giàu ngữ cảnh."""
-        req = request.Request(
-            self.endpoint,
-            method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": self.api_key,
-            },
-            data=json.dumps(payload).encode("utf-8"),
-        )
-        try:
-            with request.urlopen(req, timeout=self.timeout_seconds) as resp:
-                raw = resp.read().decode("utf-8")
-                return json.loads(raw)
-        except error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="ignore")
-            raise RuntimeError(f"Gemini embedding HTTP {exc.code}: {body}") from exc
-        except error.URLError as exc:
-            raise RuntimeError(f"Gemini embedding network error: {exc}") from exc
 

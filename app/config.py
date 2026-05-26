@@ -52,6 +52,9 @@ class Settings:
     refresh_interval_minutes: int = _as_int("REFRESH_INTERVAL_MINUTES", 15)
 
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+    google_genai_use_vertexai: bool = _as_bool("GOOGLE_GENAI_USE_VERTEXAI", False)
+    google_cloud_project: str = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+    google_cloud_location: str = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
     gemini_embed_model: str = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
     gemini_embed_dim: int = _as_int("GEMINI_EMBED_DIM", 768)
     gemini_batch_size: int = _as_int("GEMINI_BATCH_SIZE", 32)
